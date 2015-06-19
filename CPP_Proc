@@ -1,0 +1,138 @@
+arDir2={'Anders\','Anders\CPP Test\'};
+%arFNms={'ACM1_prec1.mp4','ACM2_prec1.mp4','ACM3_prec1.mp4','ACM4_prec1.mp4','ACM5_prec1.mp4','ACM6_prec1.mp4', ...
+%        'ACM1_CPP.mp4','ACM2_CPP.mp4','ACM3_CPP.mp4','ACM4_CPP.mp4','ACM5_CPP.mp4','ACM6_CPP.mp4'};
+%arFBgs={'ACM1_bg2.mp4','ACM2_bg1.mp4','ACM3_bg.mp4','ACM4_bg.mp4','ACM5_bg1.mp4','ACM6_bg1.mp4', ...
+%        'ACM1_bg_CPP.mp4','ACM2_bg_CPP.mp4','ACM3_bg_CPP.mp4','ACM4_bg_CPP.mp4','ACM5_bg_CPP.mp4','ACM6_bg_CPP.mp4'};
+%arFNms={'ACM7_prec1.mp4','ACM8_prec1.mp4','ACM9_prec1.mp4','ACM10_prec1.mp4','ACM11_prec1.mp4','ACM12_prec1.mp4'};
+arFNms={'ACM15_CPP.mp4','ACM16_CPP.mp4','ACM17_CPP.mp4','ACM18_CPP.mp4'};
+%arFNms={'ACM19_prec3.mp4'};
+%arFBgs={'ACM7_bg3.mp4','ACM8_bg.mp4','ACM9_bg.mp4','ACM10_bg.mp4','ACM11_bg.mp4','ACM12_bg.mp4'};
+arFBgs={'ACM15_bg1_CPP.mp4','ACM16_bg_CPP.mp4','ACM17_bg_CPP.mp4','ACM18_bg_CPP.mp4'};
+%arFBgs={'ACM19_bg3.mp4'};
+%arDir2Ind=[1 1 1 1 1 1 2 2 2 2 2 2];
+%arDir2Ind=1;
+arDir2Ind=[1 1 1 1];
+%arDir2Ind=[2 2 2 2 2 2];
+fnDir='C:\Misha\MATLAB\vid\'; % Work directory
+fnXls=[fnDir 'AndersCPP.xlsx'];
+
+niAT=15*60; % Session time in sec
+isPrEm=false;
+nBuf=0;
+
+
+for niClp=1:length(arFNms)
+%for niClp=3:3
+  fnIn=[fnDir arDir2{arDir2Ind(niClp)} arFNms{niClp}]; % Input video file name
+  fnBg=[fnDir arDir2{arDir2Ind(niClp)} arFBgs{niClp}]; % Input video file name
+  fnOut=strrep(fnIn,'.mp4','_.mp4'); % Output video file name
+
+  voCReader=vision.VideoFileReader(fnBg);  %Initialize video file reader system with color frame type 
+  fcCur=skipframes(voCReader,30);
+  [arWorkROI,arDivLine]=findCoord15(fcCur);
+  release(voCReader);
+  fpIn=dir(fnIn);
+  voCReader=vision.VideoFileReader(fnIn);  %Initialize video file reader system with color frame type 
+  skipframes(voCReader,5);
+  %skipframes(voCReader,240);
+  nFrRt=voCReader.info.VideoFrameRate;
+  niFT=floor(nFrRt*niAT);
+  %niFT=500;
+
+  arCntrd=zeros(niFT,2,'int16');
+  arBBox=zeros(niFT,2,'int16');
+  arFrame=zeros(niFT,ceil((arWorkROI(3)+1)/32),arWorkROI(4)+1,'uint32');
+  fprintf('Processing %s\n',arFNms{niClp});
+  nFr=1;     % Frame counter
+  while ~isDone(voCReader)&&nFr<=niFT%~isDone(voCReader)   % Start processing loop
+    if ~mod(nFr,100)
+      fprintf('%u\n',nFr);
+    end
+    fcCur=step(voCReader);      % Read a frame, skip 4
+    fbDif=blobProcess_mex(fcCur);
+    fbDif1=fbDif(arWorkROI(2):arWorkROI(2)+arWorkROI(4),arWorkROI(1):arWorkROI(1)+arWorkROI(3));
+    [arCntrd(nFr,:),arBBox(nFr,:),arFrame(nFr,:,:)]=blobParams_mex(fbDif1); % Extract skeleton, medial distances
+    if arCntrd(nFr,1)
+      if nBuf
+        nBuf=nBuf-1;
+      elseif isPrEm
+        nBuf=40;
+        isPrEm=false;
+      else
+        nFr=nFr+1;          %
+      end
+    else
+      isPrEm=true;
+    end
+  end
+  nFr=nFr-1;
+  release(voCReader);
+  if nFr<niFT
+    stCmnt=sprintf('Short clip (%.1f s)',nFr/nFrRt);
+  else
+    stCmnt='';
+  end;
+  niFT=nFr;
+  arWdt=diff(arBBox')';
+  %arDif=[0 0;abs(diff(arBBox))];
+  niWThr=max(arWdt)/2;
+  arLap=abs(4*del2(single(arBBox)));
+  niGr=10;
+  b=(1/niGr)*ones(1,niGr);
+  %arSum=filter(b,1,single(arDif));
+  arSum=filter(b,1,single(arLap));
+  isRight=diff(arSum,1,2)>0;
+  isRights=isRight+circshift(isRight,1)+circshift(isRight,-1)-1;
+  isRights=(isRights>0);
+  niL=0;
+  niR=0;
+  %voCWriter=vision.VideoFileWriter(fnOut,'FileColorSpace','RGB','VideoCompressor','DV Video Encoder','FrameRate',voCReader.info.VideoFrameRate);  %Initialize video file reader system with color frame type 
+  voCWriter=vision.VideoFileWriter(fnOut,'FileFormat','MPEG4','FileColorSpace','RGB','FrameRate',nFrRt);  %Initialize video file reader system with color frame type 
+  voPad=vision.ImagePadder('SizeMethod','Output Size','NumOutputRows',360,'NumOutputColumns',640);
+  fprintf('Writing %s\n',arFNms{niClp});
+  onLeft=~isRights;
+  for nFr=1:niFT% Start processing loop
+    if ~mod(nFr,500)
+      fprintf('%u\n',nFr);
+    end
+    if arBBox(nFr,2)<arDivLine(3)
+      onLeft(nFr)=true;
+    elseif arBBox(nFr,1)>arDivLine(3)
+      onLeft(nFr)=false;
+    elseif nFr>1&&onLeft(nFr-1)==isRights(nFr)&&arWdt(nFr)<niWThr
+      onLeft(nFr)=isRights(nFr);
+    else
+      onLeft(nFr)=~isRights(nFr);
+    end  
+    fgDif=single(bwunpack(squeeze(arFrame(nFr,:,:)),arWorkROI(3)+1)');
+    fcDif=insertShape(fgDif,'Line',arDivLine,'Color','green');
+    fcDif=insertShape(fcDif,'Line',[arBBox(nFr,1) 1 arBBox(nFr,1) arDivLine(4);arBBox(nFr,2) 1 arBBox(nFr,2) arDivLine(4)],'Color','yellow');
+    fcDif=insertMarker(fcDif,arCntrd(nFr,:),'Color','red');
+    fcOut=step(voPad,fcDif);
+    nsLft=niL/nFrRt;
+    nsRgt=niR/nFrRt;
+    stLft=sprintf('%06.1f',nsLft);
+    stRgt=sprintf('%06.1f',nsRgt);
+    stFrm=sprintf('%04u',nFr);
+    fcOut=insertText(fcOut,[20 20;565 20;305 330],{stLft,stRgt,stFrm},'FontSize',16,'TextColor','white','BoxOpacity',0);
+    if onLeft(nFr)
+      niL=niL+1 ;
+      fcOut=insertText(fcOut,[310 20],'L','FontSize',24,'TextColor','blue','BoxOpacity',0);
+    else
+      niR=niR+1;
+      fcOut=insertText(fcOut,[310 20],'R','FontSize',24,'TextColor','red','BoxOpacity',0);
+    end  
+    step(voCWriter,fcOut);
+  end
+  release(voCWriter);
+  release(voPad);
+  if exist(fnXls,'file')
+    [~,~,arData]=xlsread(fnXls);
+    xlRow=size(arData,1)+1;
+  else
+    xlswrite(fnXls,{'Media file','Left','Right','Recorded','Processed','Comment'},'A1:F1');
+    xlRow=2;
+  end;
+  arData={arFNms{niClp},nsLft,nsRgt,fpIn.date,datestr(datetime,'mm/dd/yyyy HH:MM:SS PM'),stCmnt};
+  xlswrite(fnXls,arData,sprintf('A%u:F%u',xlRow,xlRow));
+end
